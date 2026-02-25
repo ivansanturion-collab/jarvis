@@ -364,10 +364,30 @@ class AsanaClient:
 
             tareas.append(
                 {
+                    "gid": task.get("gid"),
                     "emoji_prioridad": emoji_prioridad,
                     "proyecto": proyecto,
                     "name": nombre,
+                    "seccion": nombre_seccion_corto,
                 }
             )
 
         return tareas
+
+    def completar_tarea(self, task_gid: str):
+        """Marca una tarea como completada y la mueve a la sección 'Hecho'."""
+        # Marcar como completada
+        self.tasks_api.update_task(
+            {"data": {"completed": True}},
+            task_gid,
+            {},
+        )
+
+        # Mover a sección "Hecho" si existe
+        seccion_hecho_gid = self._resolver_seccion_gid_por_nombre_corto("Hecho")
+        if seccion_hecho_gid:
+            self.sections_api.add_task_for_section(
+                seccion_hecho_gid,
+                {"body": {"data": {"task": task_gid}}},
+            )
+            logger.info(f"✅ Tarea {task_gid} movida a sección 'Hecho'")

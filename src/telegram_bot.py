@@ -1,7 +1,14 @@
 """Bot de Telegram — Punto de entrada de captura."""
 
 from telegram import Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    CommandHandler,
+    ConversationHandler,
+    filters,
+    ContextTypes,
+)
 from .config import TELEGRAM_BOT_TOKEN, logger
 from .classifier import clasificar_mensaje
 from .transcriber import transcribir_audio
@@ -10,6 +17,8 @@ from .asana_client import AsanaClient
 # Cliente Asana (se inicializa una vez)
 asana_client: AsanaClient | None = None
 
+# Estados para /done
+DONE_WAITING_SELECTION, DONE_WAITING_CONFIRMATION = range(2)
 
 def _formatear_confirmacion(clasificacion: dict) -> str:
     """Formatea el mensaje de confirmación para Telegram."""
@@ -205,6 +214,129 @@ async def cmd_semana(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
 
 
+async def cmd_done_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entrada al flujo /done."""
+    texto_args = " ".join(context.args).strip() if getattr(context, "args", None) else ""
+
+    # Construir lista de tareas de Hoy, Semana y Backlog
+    tareas = []
+    for seccion in ("Hoy", "Semana", "Backlog"):
+        tareas.extend(asana_client.listar_tareas_seccion(seccion))
+
+    if not tareas:
+        await update.message.reply_text("🎉 No tenés tareas pendientes")
+        return ConversationHandler.END
+
+    context.user_data["done_tasks"] = tareas
+
+    # Modo búsqueda por texto
+    if texto_args:
+        query = texto_args.lower()
+        mejor = None
+        mejor_score = 0.0
+
+        for t in tareas:
+            name_l = t["name"].lower()
+            score = 0.0
+            if query in name_l:
+                # Puntaje simple: proporción de match
+                score = len(query) / max(len(name_l), 1)
+            if score > mejor_score:
+                mejor_score = score
+                mejor = t
+
+        if not mejor or mejor_score == 0:
+            await update.message.reply_text("❌ No encontré ninguna tarea que matchee ese texto.")
+            return ConversationHandler.END
+
+        context.user_data["done_selected_task"] = mejor
+        await update.message.reply_text(
+            f"¿Confirmás completar: {mejor['name']}? (Sí/No)"
+        )
+        return DONE_WAITING_CONFIRMATION
+
+    # Modo listado numerado
+    lineas = ["📋 ¿Cuál completaste?", ""]
+    for idx, t in enumerate(tareas, start=1):
+        lineas.append(
+            f"{idx}. {t['emoji_prioridad']} {t['seccion']} — {t['name']}"
+        )
+
+    await update.message.reply_text("\n".join(lineas))
+    return DONE_WAITING_SELECTION
+
+
+async def done_receive_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recibe el número de tarea a completar."""
+    tareas = context.user_data.get("done_tasks") or []
+    mensaje = (update.message.text or "").strip()
+
+    if not mensaje.isdigit():
+        await update.message.reply_text(
+            "Decime un número válido (por ejemplo, 1) o /cancel para salir."
+        )
+        return DONE_WAITING_SELECTION
+
+    idx = int(mensaje)
+    if idx < 1 or idx > len(tareas):
+        await update.message.reply_text(
+            f"El número debe estar entre 1 y {len(tareas)}. Probá de nuevo."
+        )
+        return DONE_WAITING_SELECTION
+
+    seleccionada = tareas[idx - 1]
+    context.user_data["done_selected_task"] = seleccionada
+
+    await update.message.reply_text(
+        f"¿Confirmás completar: {seleccionada['name']}? (Sí/No)"
+    )
+    return DONE_WAITING_CONFIRMATION
+
+
+async def done_receive_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirma o cancela la finalización de la tarea."""
+    texto = (update.message.text or "").strip().lower()
+    seleccionada = context.user_data.get("done_selected_task")
+
+    if not seleccionada:
+        await update.message.reply_text("No hay ninguna tarea seleccionada.")
+        return ConversationHandler.END
+
+    positivos = {"sí", "si", "s", "yes", "y"}
+    negativos = {"no", "n"}
+
+    if texto in positivos:
+        try:
+            asana_client.completar_tarea(seleccionada["gid"])
+            await update.message.reply_text(f"✅ Completada: {seleccionada['name']}")
+        except Exception as e:
+            logger.error(f"Error completando tarea {seleccionada['gid']}: {e}")
+            await update.message.reply_text(
+                f"❌ Error completando la tarea: {str(e)[:100]}"
+            )
+
+        context.user_data.pop("done_tasks", None)
+        context.user_data.pop("done_selected_task", None)
+        return ConversationHandler.END
+
+    if texto in negativos:
+        await update.message.reply_text("❌ Cancelado")
+        context.user_data.pop("done_tasks", None)
+        context.user_data.pop("done_selected_task", None)
+        return ConversationHandler.END
+
+    await update.message.reply_text('Respondé "Sí" o "No", por favor.')
+    return DONE_WAITING_CONFIRMATION
+
+
+async def cmd_done_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancela el flujo /done."""
+    context.user_data.pop("done_tasks", None)
+    context.user_data.pop("done_selected_task", None)
+    await update.message.reply_text("❌ Cancelado")
+    return ConversationHandler.END
+
+
 def run_bot():
     """Inicia el bot de Telegram en modo polling."""
     global asana_client
@@ -220,6 +352,22 @@ def run_bot():
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CommandHandler("done", cmd_done_entry)],
+            states={
+                DONE_WAITING_SELECTION: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, done_receive_index)
+                ],
+                DONE_WAITING_CONFIRMATION: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, done_receive_confirmation
+                    )
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", cmd_done_cancel)],
+        )
+    )
     app.add_handler(CommandHandler("hoy", cmd_hoy))
     app.add_handler(CommandHandler("semana", cmd_semana))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
