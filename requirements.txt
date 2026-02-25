@@ -1,0 +1,11 @@
+# Telegram
+python-telegram-bot>=20.0
+
+# OpenAI (Whisper + GPT)
+openai>=1.0.0
+
+# Asana
+asana>=5.0.0
+
+# Utils
+python-dotenv>=1.0.0

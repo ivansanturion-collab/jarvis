@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+data/procesados.json
+data/checkpoint.json
+data/asana_ids.json
+*.ogg
+*.mp3
+*.wav
+.venv/
+venv/
