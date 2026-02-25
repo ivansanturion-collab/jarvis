@@ -30,6 +30,22 @@ class AsanaClient:
         self.ids = self._load_or_discover_ids()
         self._init_procesados()
 
+    def _resolver_seccion_gid_por_nombre_corto(self, nombre_corto: str) -> str | None:
+        """Resuelve el GID de una sección a partir de un nombre simple ("Hoy", "Semana")."""
+        secciones = self.ids.get("secciones", {}) or {}
+
+        # Match exacto
+        gid = secciones.get(nombre_corto)
+        if gid:
+            return gid
+
+        # Match por sufijo, para nombres con emoji como "🔥 Hoy"
+        for nombre_seccion, sgid in secciones.items():
+            if nombre_seccion.endswith(f" {nombre_corto}"):
+                return sgid
+
+        logger.warning(f"⚠️ No se encontró sección en Asana para nombre '{nombre_corto}'")
+        return None
     # ──────────────────────────────────────────────
     # Auto-discovery de IDs
     # ──────────────────────────────────────────────
@@ -197,7 +213,7 @@ class AsanaClient:
         nombre_seccion = PRIORIDAD_SECCION_MAP.get(
             clasificacion.get("prioridad", "media"), "Semana"
         )
-        seccion_gid = self.ids["secciones"].get(nombre_seccion)
+        seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion)
 
         # Construir notas
         emoji_prioridad = {"alta": "🔴", "media": "🟡", "baja": "🟢"}.get(
@@ -235,6 +251,10 @@ class AsanaClient:
                 logger.warning(
                     f"⚠️ No se encontró opción de custom field 'Proyecto' para valor '{proyecto}'"
                 )
+
+        # ──────────────────────────────────────────────
+        # Crear tarea
+        # ──────────────────────────────────────────────
 
         # Crear tarea
         try:
@@ -277,3 +297,77 @@ class AsanaClient:
         except Exception as e:
             logger.error(f"❌ Error creando tarea en Asana: {e}")
             raise
+
+    # ──────────────────────────────────────────────
+    # Consultar tareas por sección
+    # ──────────────────────────────────────────────
+
+    def listar_tareas_seccion(self, nombre_seccion_corto: str) -> list[dict]:
+        """
+        Devuelve tareas no completadas de una sección dada ("Hoy", "Semana").
+
+        Retorna una lista de dicts:
+            {
+                "emoji_prioridad": str,
+                "proyecto": str,
+                "name": str,
+            }
+        """
+        seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion_corto)
+        if not seccion_gid:
+            return []
+
+        tareas = []
+        opts = {
+            "opt_fields": (
+                "name,completed,notes,"
+                "custom_fields,custom_fields.name,"
+                "custom_fields.enum_value,custom_fields.enum_value.name"
+            ),
+        }
+
+        for task in self.tasks_api.get_tasks_for_section(seccion_gid, opts):
+            if task.get("completed"):
+                continue
+
+            nombre = task.get("name") or "(sin título)"
+            notas = task.get("notes") or ""
+
+            # Proyecto desde custom field "Proyecto"
+            proyecto = "Sin proyecto"
+            for cf in task.get("custom_fields", []) or []:
+                if cf.get("name") == "Proyecto":
+                    enum_val = cf.get("enum_value")
+                    raw = (enum_val or {}).get("name")
+                    if raw:
+                        if " " in raw and not raw[0].isalnum():
+                            proyecto = raw.split(" ", 1)[1]
+                        else:
+                            proyecto = raw
+                    break
+
+            # Fallback: intentar parsear desde las notas
+            if proyecto == "Sin proyecto":
+                for line in notas.splitlines():
+                    if line.startswith("Proyecto:"):
+                        proyecto = line.split("Proyecto:", 1)[1].strip()
+                        break
+
+            # Emoji de prioridad desde notas (línea "Prioridad: {emoji} ...")
+            emoji_prioridad = "•"
+            for line in notas.splitlines():
+                if line.startswith("Prioridad:"):
+                    rest = line.split("Prioridad:", 1)[1].strip()
+                    if rest:
+                        emoji_prioridad = rest.split()[0]
+                    break
+
+            tareas.append(
+                {
+                    "emoji_prioridad": emoji_prioridad,
+                    "proyecto": proyecto,
+                    "name": nombre,
+                }
+            )
+
+        return tareas

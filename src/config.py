@@ -48,6 +48,7 @@ PROYECTOS_VALIDOS = [
     "Nomadic",
     "Adquisición",
     "Docencia",
+    "Investigar",
     "Personal",
 ]
 

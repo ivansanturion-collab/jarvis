@@ -168,6 +168,43 @@ async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error recargando: {str(e)[:100]}")
 
 
+async def _cmd_listar_seccion(update: Update, nombre_seccion: str, titulo: str):
+    """Helper para /hoy y /semana."""
+    try:
+        tareas = asana_client.listar_tareas_seccion(nombre_seccion)
+
+        if not tareas:
+            if nombre_seccion == "Hoy":
+                await update.message.reply_text("🎉 No tenés tareas pendientes para hoy")
+            elif nombre_seccion == "Semana":
+                await update.message.reply_text("🎉 No tenés tareas pendientes para esta semana")
+            else:
+                await update.message.reply_text("🎉 No tenés tareas pendientes")
+            return
+
+        lineas = [f"{titulo} ({len(tareas)})"]
+        for t in tareas:
+            lineas.append(
+                f"{t['emoji_prioridad']} {t['proyecto']} — {t['name']}"
+            )
+
+        await update.message.reply_text("\n".join(lineas))
+
+    except Exception as e:
+        logger.error(f"Error listando tareas de sección {nombre_seccion}: {e}")
+        await update.message.reply_text(f"❌ Error consultando tareas: {str(e)[:100]}")
+
+
+async def cmd_hoy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /hoy — lista tareas de la sección Hoy."""
+    await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+
+
+async def cmd_semana(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /semana — lista tareas de la sección Semana."""
+    await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+
+
 def run_bot():
     """Inicia el bot de Telegram en modo polling."""
     global asana_client
@@ -183,6 +220,8 @@ def run_bot():
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("hoy", cmd_hoy))
+    app.add_handler(CommandHandler("semana", cmd_semana))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))

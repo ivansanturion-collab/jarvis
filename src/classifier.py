@@ -51,6 +51,7 @@ Reglas:
 - Si mencionan Substack, LinkedIn, contenido propio → proyecto = "Marca personal"
 - Si mencionan bots, agentes, automatizar, Claude, Cursor → proyecto = "Automatización"
 - Si mencionan enseñar, Semillero, curso → proyecto = "Docencia"
+- Si mencionan investigar, research, analizar empresa, diagnóstico → proyecto = "Investigar"
 - Si mencionan gym, médico, trámite, casa → proyecto = "Personal"
 - Si hay duda, usá "Personal"
 - El resumen debe ser accionable: empezar con verbo cuando sea posible
