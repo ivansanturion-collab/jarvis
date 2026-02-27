@@ -1,10 +1,9 @@
 """Bot de Telegram — Punto de entrada de captura."""
 
 import json
-from datetime import date
+from datetime import date, time
+from zoneinfo import ZoneInfo
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -449,8 +448,8 @@ async def cmd_done_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def _enviar_resumen_programado(app: Application):
-    """Job de APScheduler: envía el resumen semanal al chat configurado."""
+async def _enviar_resumen_programado(context: ContextTypes.DEFAULT_TYPE):
+    """Job de JobQueue: envía el resumen semanal al chat configurado."""
     try:
         if not CHAT_ID_FILE.exists():
             logger.info("ℹ️ No hay chat_id configurado, no se envía resumen semanal.")
@@ -463,8 +462,8 @@ async def _enviar_resumen_programado(app: Application):
             return
 
         texto = _formatear_resumen_semanal()
-        await app.bot.send_message(chat_id=chat_id, text=texto)
-        logger.info("✅ Resumen semanal enviado automáticamente por APScheduler")
+        await context.bot.send_message(chat_id=chat_id, text=texto)
+        logger.info("✅ Resumen semanal enviado automáticamente por JobQueue")
     except Exception as e:
         logger.error(f"❌ Error enviando resumen semanal automático: {e}")
 
@@ -478,8 +477,24 @@ def run_bot():
     # Inicializar cliente Asana (auto-discover IDs)
     asana_client = AsanaClient()
 
+    # Callback post_init para registrar jobs en el JobQueue
+    async def _post_init(app: Application):
+        tz = ZoneInfo("America/Argentina/Buenos_Aires")
+        # Viernes (4) a las 18:00 hora Argentina
+        app.job_queue.run_daily(
+            _enviar_resumen_programado,
+            time(hour=18, minute=0, tzinfo=tz),
+            days=(4,),
+            name="resumen_semanal_telegram",
+        )
+
     # Construir app de Telegram
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(_post_init)
+        .build()
+    )
 
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
@@ -506,17 +521,6 @@ def run_bot():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
-
-    # Scheduler para envío automático de resumen los viernes 18:00 (UTC-3)
-    scheduler = AsyncIOScheduler(timezone="America/Argentina/Buenos_Aires")
-    scheduler.add_job(
-        _enviar_resumen_programado,
-        CronTrigger(day_of_week="fri", hour=18, minute=0),
-        args=[app],
-        name="resumen_semanal_telegram",
-        replace_existing=True,
-    )
-    scheduler.start()
 
     logger.info("🤖 Jarvis escuchando en Telegram...")
     app.run_polling(allowed_updates=["message"])
