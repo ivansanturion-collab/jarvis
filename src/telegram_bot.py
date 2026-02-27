@@ -1,5 +1,10 @@
 """Bot de Telegram — Punto de entrada de captura."""
 
+import json
+from datetime import date
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -9,7 +14,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from .config import TELEGRAM_BOT_TOKEN, logger
+from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, logger
 from .classifier import clasificar_mensaje
 from .transcriber import transcribir_audio
 from .asana_client import AsanaClient
@@ -19,6 +24,92 @@ asana_client: AsanaClient | None = None
 
 # Estados para /done
 DONE_WAITING_SELECTION, DONE_WAITING_CONFIRMATION = range(2)
+
+
+def _ensure_chat_id_persisted(update: Update):
+    """Guarda el chat_id en data/chat_id.json si aún no existe."""
+    if not update.effective_chat:
+        return
+
+    chat_id = update.effective_chat.id
+
+    try:
+        if CHAT_ID_FILE.exists():
+            # Si ya existe y es el mismo, no hacemos nada
+            data = json.loads(CHAT_ID_FILE.read_text(encoding="utf-8"))
+            if data.get("chat_id") == chat_id:
+                return
+
+        CHAT_ID_FILE.write_text(
+            json.dumps({"chat_id": chat_id}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(f"💾 chat_id guardado/actualizado en {CHAT_ID_FILE}")
+    except Exception as e:
+        logger.error(f"❌ No se pudo guardar chat_id: {e}")
+
+
+def _formatear_rango_fechas(desde: date, hasta: date) -> str:
+    """Devuelve un string tipo 'lunes 24/2 → viernes 28/2'."""
+    dias = [
+        "lunes",
+        "martes",
+        "miércoles",
+        "jueves",
+        "viernes",
+        "sábado",
+        "domingo",
+    ]
+
+    def fmt(d: date) -> str:
+        return f"{dias[d.weekday()]} {d.day}/{d.month}"
+
+    return f"{fmt(desde)} → {fmt(hasta)}"
+
+
+def _formatear_resumen_semanal() -> str:
+    """Construye el texto del resumen semanal a partir de Asana."""
+    global asana_client
+    if asana_client is None:
+        raise RuntimeError("AsanaClient no inicializado")
+
+    resumen = asana_client.obtener_resumen_semanal()
+    desde: date = resumen["desde"]
+    hasta: date = resumen["hasta"]
+    completadas = resumen["completadas"]
+    vencidas = resumen["vencidas"]
+    por_proyecto = resumen["por_proyecto"]
+
+    lineas: list[str] = []
+    lineas.append(f"📊 Resumen semanal ({_formatear_rango_fechas(desde, hasta)})")
+
+    # Completadas
+    lineas.append(f"\n✅ Completadas ({len(completadas)})")
+    if completadas:
+        for t in completadas:
+            lineas.append(f"• {t['proyecto']} — {t['name']}")
+    else:
+        lineas.append("• (ninguna)")
+
+    # Vencidas / atrasadas
+    lineas.append(f"\n⚠️ Vencidas / atrasadas ({len(vencidas)})")
+    if vencidas:
+        for t in vencidas:
+            d = t["due_on"]
+            lineas.append(
+                f"• {t['proyecto']} — {t['name']} (venció {d.day}/{d.month})"
+            )
+    else:
+        lineas.append("• (ninguna)")
+
+    # Por proyecto
+    if por_proyecto:
+        partes = [f"{proj} ({count})" for proj, count in sorted(por_proyecto.items())]
+        lineas.append(f"\n📁 Por proyecto: " + ", ".join(partes))
+    else:
+        lineas.append("\n📁 Por proyecto: (sin tareas completadas)")
+
+    return "\n".join(lineas)
 
 def _formatear_confirmacion(clasificacion: dict) -> str:
     """Formatea el mensaje de confirmación para Telegram."""
@@ -46,6 +137,7 @@ def _formatear_confirmacion(clasificacion: dict) -> str:
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa mensajes de texto."""
+    _ensure_chat_id_persisted(update)
     texto = update.message.text
     message_id = str(update.message.message_id)
 
@@ -77,6 +169,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa notas de voz."""
+    _ensure_chat_id_persisted(update)
     message_id = str(update.message.message_id)
 
     logger.info(f"🎤 Nota de voz recibida (message_id: {message_id})")
@@ -121,6 +214,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa archivos de audio adjuntos."""
+    _ensure_chat_id_persisted(update)
     message_id = str(update.message.message_id)
 
     logger.info(f"🎵 Audio recibido (message_id: {message_id})")
@@ -159,12 +253,17 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /start."""
+    _ensure_chat_id_persisted(update)
     await update.message.reply_text(
         "🤖 Jarvis activo.\n\n"
         "Mandame texto o notas de voz y los cargo automáticamente como tareas en Asana.\n\n"
         "Comandos:\n"
         "/start — Este mensaje\n"
-        "/refresh — Recargar configuración de Asana"
+        "/refresh — Recargar configuración de Asana\n"
+        "/hoy — Tareas para hoy\n"
+        "/semana — Tareas para esta semana\n"
+        "/done — Marcar tareas como realizadas\n"
+        "/resumen — Resumen semanal (últimos 7 días)"
     )
 
 
@@ -175,6 +274,19 @@ async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 IDs de Asana recargados correctamente.")
     except Exception as e:
         await update.message.reply_text(f"❌ Error recargando: {str(e)[:100]}")
+
+
+async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /resumen — envía resumen semanal."""
+    _ensure_chat_id_persisted(update)
+    try:
+        texto = _formatear_resumen_semanal()
+        await update.message.reply_text(texto)
+    except Exception as e:
+        logger.error(f"Error generando resumen semanal: {e}")
+        await update.message.reply_text(
+            f"❌ Error generando resumen semanal: {str(e)[:150]}"
+        )
 
 
 async def _cmd_listar_seccion(update: Update, nombre_seccion: str, titulo: str):
@@ -337,6 +449,26 @@ async def cmd_done_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def _enviar_resumen_programado(app: Application):
+    """Job de APScheduler: envía el resumen semanal al chat configurado."""
+    try:
+        if not CHAT_ID_FILE.exists():
+            logger.info("ℹ️ No hay chat_id configurado, no se envía resumen semanal.")
+            return
+
+        data = json.loads(CHAT_ID_FILE.read_text(encoding="utf-8"))
+        chat_id = data.get("chat_id")
+        if not chat_id:
+            logger.warning("⚠️ chat_id.json no contiene 'chat_id'")
+            return
+
+        texto = _formatear_resumen_semanal()
+        await app.bot.send_message(chat_id=chat_id, text=texto)
+        logger.info("✅ Resumen semanal enviado automáticamente por APScheduler")
+    except Exception as e:
+        logger.error(f"❌ Error enviando resumen semanal automático: {e}")
+
+
 def run_bot():
     """Inicia el bot de Telegram en modo polling."""
     global asana_client
@@ -352,6 +484,7 @@ def run_bot():
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("done", cmd_done_entry)],
@@ -373,6 +506,17 @@ def run_bot():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
+
+    # Scheduler para envío automático de resumen los viernes 18:00 (UTC-3)
+    scheduler = AsyncIOScheduler(timezone="America/Argentina/Buenos_Aires")
+    scheduler.add_job(
+        _enviar_resumen_programado,
+        CronTrigger(day_of_week="fri", hour=18, minute=0),
+        args=[app],
+        name="resumen_semanal_telegram",
+        replace_existing=True,
+    )
+    scheduler.start()
 
     logger.info("🤖 Jarvis escuchando en Telegram...")
     app.run_polling(allowed_updates=["message"])

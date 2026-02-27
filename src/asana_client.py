@@ -2,6 +2,8 @@
 
 import json
 import hashlib
+from datetime import datetime, timedelta, date, timezone
+
 import asana
 from pathlib import Path
 from .config import (
@@ -391,3 +393,147 @@ class AsanaClient:
                 {"body": {"data": {"task": task_gid}}},
             )
             logger.info(f"✅ Tarea {task_gid} movida a sección 'Hecho'")
+
+    # ──────────────────────────────────────────────
+    # Resumen semanal
+    # ──────────────────────────────────────────────
+
+    def _extraer_proyecto_desde_task(self, task: dict) -> str:
+        """Obtiene el nombre de proyecto normalizado desde custom fields / notas."""
+        proyecto = "Sin proyecto"
+        notas = task.get("notes") or ""
+
+        # Desde custom field "Proyecto"
+        for cf in task.get("custom_fields", []) or []:
+            if cf.get("name") == "Proyecto":
+                enum_val = cf.get("enum_value")
+                raw = (enum_val or {}).get("name")
+                if raw:
+                    if " " in raw and not raw[0].isalnum():
+                        proyecto = raw.split(" ", 1)[1]
+                    else:
+                        proyecto = raw
+                break
+
+        # Fallback: intentar parsear desde las notas
+        if proyecto == "Sin proyecto":
+            for line in notas.splitlines():
+                if line.startswith("Proyecto:"):
+                    proyecto = line.split("Proyecto:", 1)[1].strip()
+                    break
+
+        return proyecto
+
+    def obtener_resumen_semanal(self, hoy: date | None = None) -> dict:
+        """
+        Devuelve un resumen semanal:
+
+        - Tareas completadas en la sección "Hecho" en los últimos 7 días (completed_at)
+        - Tareas vencidas/no completadas en secciones Hoy, Semana, Backlog (due_on < hoy)
+        - Conteo de completadas por proyecto (custom field "Proyecto")
+        """
+        if hoy is None:
+            hoy = datetime.now(timezone.utc).date()
+
+        desde = hoy - timedelta(days=6)  # ventana de 7 días: hoy y 6 días hacia atrás
+
+        completadas: list[dict] = []
+        vencidas: list[dict] = []
+        por_proyecto: dict[str, int] = {}
+
+        # ── Completadas en "Hecho" ─────────────────────────────────────────
+        seccion_hecho_gid = self._resolver_seccion_gid_por_nombre_corto("Hecho")
+        if seccion_hecho_gid:
+            opts_hecho = {
+                "opt_fields": (
+                    "name,completed,completed_at,notes,"
+                    "custom_fields,custom_fields.name,"
+                    "custom_fields.enum_value,custom_fields.enum_value.name"
+                ),
+            }
+            for task in self.tasks_api.get_tasks_for_section(seccion_hecho_gid, opts_hecho):
+                if not task.get("completed"):
+                    continue
+
+                completed_at_raw = task.get("completed_at")
+                if not completed_at_raw:
+                    continue
+
+                try:
+                    # Asana devuelve ISO 8601, normalmente con 'Z'
+                    completed_dt = datetime.fromisoformat(
+                        completed_at_raw.replace("Z", "+00:00")
+                    )
+                    completed_date = completed_dt.date()
+                except Exception:
+                    logger.warning(f"⚠️ No se pudo parsear completed_at: {completed_at_raw}")
+                    continue
+
+                if not (desde <= completed_date <= hoy):
+                    continue
+
+                proyecto = self._extraer_proyecto_desde_task(task)
+                nombre = task.get("name") or "(sin título)"
+
+                completadas.append(
+                    {
+                        "name": nombre,
+                        "proyecto": proyecto,
+                    }
+                )
+
+                por_proyecto[proyecto] = por_proyecto.get(proyecto, 0) + 1
+
+        # ── Vencidas en Hoy / Semana / Backlog ─────────────────────────────
+        opts_pendientes = {
+            "opt_fields": (
+                "name,completed,due_on,notes,"
+                "custom_fields,custom_fields.name,"
+                "custom_fields.enum_value,custom_fields.enum_value.name"
+            ),
+        }
+
+        for nombre_seccion in ("Hoy", "Semana", "Backlog"):
+            seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion)
+            if not seccion_gid:
+                continue
+
+            for task in self.tasks_api.get_tasks_for_section(seccion_gid, opts_pendientes):
+                if task.get("completed"):
+                    continue
+
+                due_on_raw = task.get("due_on")
+                if not due_on_raw:
+                    continue
+
+                try:
+                    due_date = date.fromisoformat(due_on_raw)
+                except Exception:
+                    logger.warning(f"⚠️ No se pudo parsear due_on: {due_on_raw}")
+                    continue
+
+                if due_date >= hoy:
+                    continue
+
+                nombre = task.get("name") or "(sin título)"
+                proyecto = self._extraer_proyecto_desde_task(task)
+
+                vencidas.append(
+                    {
+                        "name": nombre,
+                        "proyecto": proyecto,
+                        "due_on": due_date,
+                    }
+                )
+
+        # Orden simple: por nombre de proyecto luego nombre de tarea
+        completadas.sort(key=lambda t: (t["proyecto"], t["name"]))
+        vencidas.sort(key=lambda t: (t["proyecto"], t["due_on"], t["name"]))
+
+        return {
+            "desde": desde,
+            "hasta": hoy,
+            "completadas": completadas,
+            "vencidas": vencidas,
+            "por_proyecto": por_proyecto,
+        }
