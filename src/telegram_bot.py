@@ -110,6 +110,36 @@ def _formatear_resumen_semanal() -> str:
 
     return "\n".join(lineas)
 
+def _formatear_deadlines() -> str:
+    """Construye el texto del reporte de deadlines."""
+    global asana_client
+    if asana_client is None:
+        raise RuntimeError("AsanaClient no inicializado")
+
+    deadlines = asana_client.obtener_deadlines()
+    hoy_list = deadlines["hoy"]
+    manana_list = deadlines["manana"]
+
+    if not hoy_list and not manana_list:
+        return "✅ Sin deadlines urgentes en las próximas 48 horas."
+
+    lineas: list[str] = []
+
+    if hoy_list:
+        lineas.append("🔴 Vencen HOY:")
+        for t in hoy_list:
+            lineas.append(f"• {t['name']} → {t['proyecto']}")
+
+    if manana_list:
+        if lineas:
+            lineas.append("")
+        lineas.append("🟡 Vencen MAÑANA:")
+        for t in manana_list:
+            lineas.append(f"• {t['name']} → {t['proyecto']}")
+
+    return "\n".join(lineas)
+
+
 def _formatear_confirmacion(clasificacion: dict) -> str:
     """Formatea el mensaje de confirmación para Telegram."""
     emoji_prioridad = {"alta": "🔥", "media": "📌", "baja": "💤"}.get(
@@ -261,6 +291,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/refresh — Recargar configuración de Asana\n"
         "/hoy — Tareas para hoy\n"
         "/semana — Tareas para esta semana\n"
+        "/deadlines — Tareas que vencen hoy o mañana\n"
         "/done — Marcar tareas como realizadas\n"
         "/resumen — Resumen semanal (últimos 7 días)"
     )
@@ -273,6 +304,19 @@ async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 IDs de Asana recargados correctamente.")
     except Exception as e:
         await update.message.reply_text(f"❌ Error recargando: {str(e)[:100]}")
+
+
+async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /deadlines — muestra tareas con vencimiento en 24/48 horas."""
+    _ensure_chat_id_persisted(update)
+    try:
+        texto = _formatear_deadlines()
+        await update.message.reply_text(texto)
+    except Exception as e:
+        logger.error(f"Error generando reporte de deadlines: {e}")
+        await update.message.reply_text(
+            f"❌ Error generando reporte de deadlines: {str(e)[:150]}"
+        )
 
 
 async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -448,6 +492,26 @@ async def cmd_done_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def _enviar_deadlines_programado(context: ContextTypes.DEFAULT_TYPE):
+    """Job de JobQueue: envía reporte de deadlines de lunes a viernes a las 9 AM."""
+    try:
+        if not CHAT_ID_FILE.exists():
+            logger.info("ℹ️ No hay chat_id configurado, no se envían deadlines.")
+            return
+
+        data = json.loads(CHAT_ID_FILE.read_text(encoding="utf-8"))
+        chat_id = data.get("chat_id")
+        if not chat_id:
+            logger.warning("⚠️ chat_id.json no contiene 'chat_id'")
+            return
+
+        texto = _formatear_deadlines()
+        await context.bot.send_message(chat_id=chat_id, text=texto)
+        logger.info("✅ Reporte de deadlines enviado automáticamente por JobQueue")
+    except Exception as e:
+        logger.error(f"❌ Error enviando reporte de deadlines automático: {e}")
+
+
 async def _enviar_resumen_programado(context: ContextTypes.DEFAULT_TYPE):
     """Job de JobQueue: envía el resumen semanal al chat configurado."""
     try:
@@ -480,6 +544,13 @@ def run_bot():
     # Callback post_init para registrar jobs en el JobQueue
     async def _post_init(app: Application):
         tz = ZoneInfo("America/Argentina/Buenos_Aires")
+        # Lunes a viernes (0-4) a las 9:00 hora Argentina
+        app.job_queue.run_daily(
+            _enviar_deadlines_programado,
+            time(hour=9, minute=0, tzinfo=tz),
+            days=(0, 1, 2, 3, 4),
+            name="deadlines_diarios",
+        )
         # Viernes (4) a las 18:00 hora Argentina
         app.job_queue.run_daily(
             _enviar_resumen_programado,
@@ -499,6 +570,7 @@ def run_bot():
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("deadlines", cmd_deadlines))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(
         ConversationHandler(

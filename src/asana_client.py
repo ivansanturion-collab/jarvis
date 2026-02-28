@@ -395,6 +395,71 @@ class AsanaClient:
             logger.info(f"✅ Tarea {task_gid} movida a sección 'Hecho'")
 
     # ──────────────────────────────────────────────
+    # Deadlines próximos
+    # ──────────────────────────────────────────────
+
+    def obtener_deadlines(self, hoy: date | None = None) -> dict:
+        """
+        Devuelve tareas que vencen hoy o mañana (hora Argentina).
+
+        Returns:
+            {
+                "hoy":   [{"name": str, "proyecto": str}, ...],
+                "manana": [{"name": str, "proyecto": str}, ...],
+            }
+        """
+        from zoneinfo import ZoneInfo
+
+        if hoy is None:
+            hoy = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+
+        manana = hoy + timedelta(days=1)
+
+        hoy_list: list[dict] = []
+        manana_list: list[dict] = []
+
+        opts = {
+            "opt_fields": (
+                "name,completed,due_on,notes,"
+                "custom_fields,custom_fields.name,"
+                "custom_fields.enum_value,custom_fields.enum_value.name"
+            ),
+        }
+
+        for nombre_seccion in ("Hoy", "Semana", "Backlog"):
+            seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion)
+            if not seccion_gid:
+                continue
+
+            for task in self.tasks_api.get_tasks_for_section(seccion_gid, opts):
+                if task.get("completed"):
+                    continue
+
+                due_on_raw = task.get("due_on")
+                if not due_on_raw:
+                    continue
+
+                try:
+                    due_date = date.fromisoformat(due_on_raw)
+                except Exception:
+                    logger.warning(f"⚠️ No se pudo parsear due_on: {due_on_raw}")
+                    continue
+
+                nombre = task.get("name") or "(sin título)"
+                proyecto = self._extraer_proyecto_desde_task(task)
+                entry = {"name": nombre, "proyecto": proyecto}
+
+                if due_date == hoy:
+                    hoy_list.append(entry)
+                elif due_date == manana:
+                    manana_list.append(entry)
+
+        hoy_list.sort(key=lambda t: (t["proyecto"], t["name"]))
+        manana_list.sort(key=lambda t: (t["proyecto"], t["name"]))
+
+        return {"hoy": hoy_list, "manana": manana_list}
+
+    # ──────────────────────────────────────────────
     # Resumen semanal
     # ──────────────────────────────────────────────
 
