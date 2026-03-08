@@ -89,9 +89,24 @@ El usuario es Ivan, co-founder de una agencia de marketing digital (Nomadic) que
 La fecha de hoy es {today_iso} (formato YYYY-MM-DD). Usá ESTA fecha como referencia para interpretar fechas relativas como "hoy", "mañana", "el viernes", "esta semana", "la semana que viene", etc.
 
 Analizá el historial de la conversación. USÁ OBLIGATORIAMENTE LA HERRAMIENTA `guardar_tarea_asana` con la información de la tarea.
-IMPORTANTE: Si el usuario dice "Que sea para el viernes", "Ponela en alta prioridad", "Cambiale el nombre a X", o cualquier mensaje que sea una continuación de la tarea anterior, DEBES emitir la acción 'actualizar' y proveer el `task_gid` correspondiente (lo encontrarás en mis respuestas anteriores con el formato 'ID: ...'). Cuando actualices, enviá el estado final deseado (manteniendo el resumen original a menos que pida cambiarlo, y aplicando los nuevos cambios). Si es una tarea nueva sin relación con las anteriores, usá la acción 'crear'.
 
-Reglas:
+IMPORTANTE SOBRE ACCIONES (CREAR vs ACTUALIZAR):
+Por defecto, si el usuario manda una idea o tarea nueva, la accion es 'crear' y task_gid es null.
+PERO si el usuario manda un mensaje de SEGUIMIENTO CORTO que claramente hace referencia a la tarea inmediatamente anterior (por ejemplo, cambiando la prioridad, la fecha o el nombre), DEBES emitir la accion 'actualizar' y proveer el `task_gid` de esa tarea anterior. Lo encontrarás en tu respuesta previa, formateado como "ID: 123456...".
+
+EJEMPLOS DE ACTUALIZACIONES:
+- Usuario: "Anotar la idea de hacer un newsletter semanal"
+  Asistente: Tarea registrada exitosamente. ID: 120555333
+  Usuario: "Ponela con prioridad alta para el viernes"
+  -> Tu acción: actualizar, task_gid="120555333", prioridad="alta", due_date="[el_viernes]"
+- Usuario: "Hacer deploy"
+  Asistente: ID: 99999
+  Usuario: "Mejor ponele de titulo Hacer deploy en Render"
+  -> Tu acción: actualizar, task_gid="99999", resumen="Hacer deploy en Render"
+
+Cuando actualices, mantén el resumen original a menos que pida explícitamente cambiarlo, y aplica SOLO los nuevos cambios al contexto que ya tenés.
+
+Reglas de Proyecto:
 - Si mencionan un cliente o trabajo de agencia → proyecto = "Nomadic"
 - Si mencionan propuestas, prospectos, ventas → proyecto = "Adquisición"  
 - Si mencionan charla, presentación, evento → proyecto = "Speaker"
