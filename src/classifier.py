@@ -13,6 +13,15 @@ TOOL_GUARDAR_TAREA = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "accion": {
+                "type": "string",
+                "enum": ["crear", "actualizar"],
+                "description": "Si el usuario está dando una nueva tarea, usá 'crear'. Si está agregando contexto, modificando o hablando sobre una tarea anterior, usá 'actualizar'.",
+            },
+            "task_gid": {
+                "type": ["string", "null"],
+                "description": "Si la accion es 'actualizar', DEBES incluir acá el ID de la tarea a actualizar (suele estar en el historial como 'ID: 123456...'). Si la accion es 'crear', mandá null.",
+            },
             "proyecto": {
                 "type": "string",
                 "enum": PROYECTOS_VALIDOS,
@@ -37,7 +46,7 @@ TOOL_GUARDAR_TAREA = {
                 "description": "Fecha de vencimiento en formato YYYY-MM-DD, o null si no se menciona una fecha concreta. Usar la fecha del sistema para resolver textos relativos (hoy, mañana).",
             },
         },
-        "required": ["proyecto", "prioridad", "resumen", "tipo", "due_date"],
+        "required": ["accion", "task_gid", "proyecto", "prioridad", "resumen", "tipo", "due_date"],
     },
 }
 
@@ -50,6 +59,8 @@ def clasificar_mensaje(historial_mensajes: list[dict]) -> dict:
     
     Retorna:
         {
+            "accion": str,
+            "task_gid": str|None,
             "proyecto": str,
             "prioridad": str, 
             "resumen": str,
@@ -77,7 +88,8 @@ El usuario es Ivan, co-founder de una agencia de marketing digital (Nomadic) que
 
 La fecha de hoy es {today_iso} (formato YYYY-MM-DD). Usá ESTA fecha como referencia para interpretar fechas relativas como "hoy", "mañana", "el viernes", "esta semana", "la semana que viene", etc.
 
-Analizá el historial de la conversación. Si el usuario te está pidiendo registrar algo o alterar un pedido anterior, USÁ OBLIGATORIAMENTE LA HERRAMIENTA `guardar_tarea_asana` con la información actualizada.
+Analizá el historial de la conversación. USÁ OBLIGATORIAMENTE LA HERRAMIENTA `guardar_tarea_asana` con la información de la tarea.
+IMPORTANTE: Si el usuario dice "Que sea para el viernes", "Ponela en alta prioridad", "Cambiale el nombre a X", o cualquier mensaje que sea una continuación de la tarea anterior, DEBES emitir la acción 'actualizar' y proveer el `task_gid` correspondiente (lo encontrarás en mis respuestas anteriores con el formato 'ID: ...'). Cuando actualices, enviá el estado final deseado (manteniendo el resumen original a menos que pida cambiarlo, y aplicando los nuevos cambios). Si es una tarea nueva sin relación con las anteriores, usá la acción 'crear'.
 
 Reglas:
 - Si mencionan un cliente o trabajo de agencia → proyecto = "Nomadic"

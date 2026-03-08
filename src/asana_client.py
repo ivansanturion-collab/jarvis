@@ -300,6 +300,94 @@ class AsanaClient:
             logger.error(f"❌ Error creando tarea en Asana: {e}")
             raise
 
+    def actualizar_tarea(self, task_gid: str, clasificacion: dict) -> dict | None:
+        """
+        Actualiza una tarea existente en Asana usando la clasificación dada.
+        """
+        # Determinar sección según prioridad
+        nombre_seccion = PRIORIDAD_SECCION_MAP.get(
+            clasificacion.get("prioridad", "media"), "Semana"
+        )
+        seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion)
+
+        # Construir custom fields
+        custom_fields = {}
+        campo_gid = self.ids.get("campo_proyecto_gid")
+        if campo_gid:
+            proyecto = clasificacion.get("proyecto", "Personal")
+            opciones = self.ids.get("opciones_proyecto", {}) or {}
+
+            opcion_gid = opciones.get(proyecto)
+            if not opcion_gid:
+                for nombre_opcion, gid in opciones.items():
+                    if nombre_opcion.endswith(f" {proyecto}"):
+                        opcion_gid = gid
+                        break
+
+            if opcion_gid:
+                custom_fields[campo_gid] = opcion_gid
+            else:
+                logger.warning(
+                    f"⚠️ No se encontró opción de custom field 'Proyecto' para valor '{proyecto}'"
+                )
+
+        try:
+            # Recuperar notas viejas para preservar el texto original
+            existing_task = self.tasks_api.get_task(task_gid, {"opt_fields": "notes"})
+            old_notes = existing_task.get("notes", "")
+
+            emoji_prioridad = {"alta": "🔴", "media": "🟡", "baja": "🟢"}.get(
+                clasificacion.get("prioridad"), "⚪"
+            )
+
+            # Preservar el texto original (lo que está después de "---")
+            if "---" in old_notes:
+                parts = old_notes.split("---", 1)
+                texto_original = "---" + parts[1]
+            else:
+                texto_original = "\n---\n\nTexto original:\n(sin texto original previo)"
+
+            notas = (
+                f"Tipo: {clasificacion.get('tipo', 'nota')}\n"
+                f"Prioridad: {emoji_prioridad} {clasificacion.get('prioridad', 'media')}\n"
+                f"Proyecto: {clasificacion.get('proyecto', 'Personal')}\n"
+                f"\n{texto_original}"
+            )
+
+            task_data = {
+                "name": clasificacion.get("resumen", "Sin título"),
+                "notes": notas,
+            }
+
+            if custom_fields:
+                task_data["custom_fields"] = custom_fields
+
+            due_date = clasificacion.get("due_date")
+            if due_date:
+                task_data["due_on"] = due_date
+            else:
+                task_data["due_on"] = None
+
+            body = {"data": task_data}
+            task = self.tasks_api.update_task(body, task_gid, {})
+            logger.info(f"✅ Tarea actualizada: {task['gid']} - {task['name']}")
+
+            # Mover a sección correcta si es posible
+            if seccion_gid:
+                self.sections_api.add_task_for_section(
+                    seccion_gid,
+                    {
+                        "body": {"data": {"task": task["gid"]}},
+                    },
+                )
+                logger.info(f"  → Movida a sección: {nombre_seccion}")
+
+            return task
+
+        except Exception as e:
+            logger.error(f"❌ Error actualizando tarea {task_gid} en Asana: {e}")
+            raise
+
     # ──────────────────────────────────────────────
     # Consultar tareas por sección
     # ──────────────────────────────────────────────

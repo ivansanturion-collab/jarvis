@@ -180,7 +180,7 @@ def _formatear_deadlines() -> str:
     return "\n".join(lineas)
 
 
-def _formatear_confirmacion(clasificacion: dict) -> str:
+def _formatear_confirmacion(clasificacion: dict, accion: str = "crear") -> str:
     """Formatea el mensaje de confirmación para Telegram."""
     emoji_prioridad = {"alta": "🔥", "media": "📌", "baja": "💤"}.get(
         clasificacion.get("prioridad"), "📌"
@@ -196,8 +196,10 @@ def _formatear_confirmacion(clasificacion: dict) -> str:
         "nota": "📝",
     }.get(clasificacion.get("tipo"), "📝")
 
+    verbo = "Actualizado" if accion == "actualizar" else "Capturado"
+
     return (
-        f"✅ Capturado en Asana\n"
+        f"✅ {verbo} en Asana\n"
         f"📁 Proyecto: {clasificacion.get('proyecto', 'Personal')}\n"
         f"{emoji_prioridad} Prioridad: {clasificacion.get('prioridad', 'media')} → {seccion}\n"
         f"{emoji_tipo} \"{clasificacion.get('resumen', '')}\""
@@ -220,21 +222,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clasificar con historial
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
-        # Crear tarea en Asana
-        task = asana_client.crear_tarea(
-            texto=texto,
-            clasificacion=clasificacion,
-            message_id=message_id,
-            fuente="telegram",
-        )
+        # Ejecutar acción (crear o actualizar)
+        accion = clasificacion.get("accion", "crear")
+        task_gid = clasificacion.get("task_gid")
 
-        if task:
-            respuesta = _formatear_confirmacion(clasificacion)
-            # Agregar confirmación al historial
-            _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente.")
+        if accion == "actualizar" and task_gid:
+            task = asana_client.actualizar_tarea(
+                task_gid=task_gid,
+                clasificacion=clasificacion,
+            )
+            if task:
+                respuesta = _formatear_confirmacion(clasificacion, accion="actualizar")
+                _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' actualizada en Asana exitosamente. ID: {task_gid}")
+            else:
+                respuesta = "❌ No se pudo actualizar la tarea en Asana."
+                _agregar_mensaje_historial(chat_id, "assistant", respuesta)
         else:
-            respuesta = "⏭️ Este mensaje ya fue procesado anteriormente."
-            _agregar_mensaje_historial(chat_id, "assistant", "Ese mensaje ya lo procesé antes, no registré nada nuevo.")
+            # Crear nueva tarea
+            task = asana_client.crear_tarea(
+                texto=texto,
+                clasificacion=clasificacion,
+                message_id=message_id,
+                fuente="telegram",
+            )
+            if task:
+                respuesta = _formatear_confirmacion(clasificacion, accion="crear")
+                # Agregar confirmación al historial con el ID
+                _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente. ID: {task.get('gid', '')}")
+            else:
+                respuesta = "⏭️ Este mensaje ya fue procesado anteriormente."
+                _agregar_mensaje_historial(chat_id, "assistant", "Ese mensaje ya lo procesé antes, no registré nada nuevo.")
 
         await update.message.reply_text(respuesta)
 
@@ -268,24 +285,41 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clasificar
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
-        # Crear tarea
-        task = asana_client.crear_tarea(
-            texto=texto,
-            clasificacion=clasificacion,
-            message_id=message_id,
-            fuente="telegram_voz",
-        )
+        accion = clasificacion.get("accion", "crear")
+        task_gid = clasificacion.get("task_gid")
 
-        if task:
-            respuesta = (
-                f"🎤 Transcripción:\n\"{texto}\"\n\n"
-                f"{_formatear_confirmacion(clasificacion)}"
+        if accion == "actualizar" and task_gid:
+            task = asana_client.actualizar_tarea(
+                task_gid=task_gid,
+                clasificacion=clasificacion,
             )
-            # Agregar confirmación al historial
-            _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente.")
+            if task:
+                respuesta = (
+                    f"🎤 Transcripción:\n\"{texto}\"\n\n"
+                    f"{_formatear_confirmacion(clasificacion, accion='actualizar')}"
+                )
+                _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' actualizada en Asana exitosamente. ID: {task_gid}")
+            else:
+                respuesta = "❌ No se pudo actualizar la tarea en Asana."
+                _agregar_mensaje_historial(chat_id, "assistant", respuesta)
         else:
-            respuesta = "⏭️ Este audio ya fue procesado anteriormente."
-            _agregar_mensaje_historial(chat_id, "assistant", "Esa nota de voz ya la procesé antes, no registré nada nuevo.")
+            # Crear tarea nueva
+            task = asana_client.crear_tarea(
+                texto=texto,
+                clasificacion=clasificacion,
+                message_id=message_id,
+                fuente="telegram_voz",
+            )
+            if task:
+                respuesta = (
+                    f"🎤 Transcripción:\n\"{texto}\"\n\n"
+                    f"{_formatear_confirmacion(clasificacion, accion='crear')}"
+                )
+                # Agregar confirmación al historial
+                _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente. ID: {task.get('gid', '')}")
+            else:
+                respuesta = "⏭️ Este audio ya fue procesado anteriormente."
+                _agregar_mensaje_historial(chat_id, "assistant", "Esa nota de voz ya la procesé antes, no registré nada nuevo.")
 
         # Editar mensaje de "procesando" con el resultado
         await processing_msg.edit_text(respuesta)
@@ -317,22 +351,40 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
-        task = asana_client.crear_tarea(
-            texto=texto,
-            clasificacion=clasificacion,
-            message_id=message_id,
-            fuente="telegram_audio",
-        )
+        accion = clasificacion.get("accion", "crear")
+        task_gid = clasificacion.get("task_gid")
 
-        if task:
-            respuesta = (
-                f"🎵 Transcripción:\n\"{texto}\"\n\n"
-                f"{_formatear_confirmacion(clasificacion)}"
+        if accion == "actualizar" and task_gid:
+            task = asana_client.actualizar_tarea(
+                task_gid=task_gid,
+                clasificacion=clasificacion,
             )
-            _agregar_mensaje_historial(chat_id, "assistant", f"Recibí un audio con el texto: '{texto}'. Registré la tarea '{clasificacion.get('resumen')}' en Asana.")
+            if task:
+                respuesta = (
+                    f"🎵 Transcripción:\n\"{texto}\"\n\n"
+                    f"{_formatear_confirmacion(clasificacion, accion='actualizar')}"
+                )
+                _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' actualizada en Asana exitosamente. ID: {task_gid}")
+            else:
+                respuesta = "❌ No se pudo actualizar la tarea en Asana."
+                _agregar_mensaje_historial(chat_id, "assistant", respuesta)
         else:
-            respuesta = "⏭️ Este audio ya fue procesado anteriormente."
-            _agregar_mensaje_historial(chat_id, "assistant", "Ese audio ya lo procesé antes, no registré nada nuevo.")
+            # Crear tarea nueva
+            task = asana_client.crear_tarea(
+                texto=texto,
+                clasificacion=clasificacion,
+                message_id=message_id,
+                fuente="telegram_audio",
+            )
+            if task:
+                respuesta = (
+                    f"🎵 Transcripción:\n\"{texto}\"\n\n"
+                    f"{_formatear_confirmacion(clasificacion, accion='crear')}"
+                )
+                _agregar_mensaje_historial(chat_id, "assistant", f"Recibí un audio con el texto: '{texto}'. Registré la tarea '{clasificacion.get('resumen')}' en Asana. ID: {task.get('gid', '')}")
+            else:
+                respuesta = "⏭️ Este audio ya fue procesado anteriormente."
+                _agregar_mensaje_historial(chat_id, "assistant", "Ese audio ya lo procesé antes, no registré nada nuevo.")
 
         await processing_msg.edit_text(respuesta)
 
