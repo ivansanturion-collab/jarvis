@@ -3,24 +3,65 @@
 import json
 from datetime import datetime
 
-import openai
-from .config import OPENAI_API_KEY, PROYECTOS_VALIDOS, logger
+import anthropic
+from .config import ANTHROPIC_API_KEY, PROYECTOS_VALIDOS, logger
 
+# Tool definition para Claude
+TOOL_GUARDAR_TAREA = {
+    "name": "guardar_tarea_asana",
+    "description": "Extrae la información estructurada de un mensaje para crear o actualizar una tarea en Asana.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "proyecto": {
+                "type": "string",
+                "enum": PROYECTOS_VALIDOS,
+                "description": "El proyecto al que pertenece la tarea.",
+            },
+            "prioridad": {
+                "type": "string",
+                "enum": ["alta", "media", "baja"],
+                "description": "La prioridad de la acción. Alta: urgente/hoy, Media: esta semana, Baja: puede esperar.",
+            },
+            "resumen": {
+                "type": "string",
+                "description": "Un título corto, claro y accionable para la tarea (máximo 80 caracteres). Comenzar con un verbo.",
+            },
+            "tipo": {
+                "type": "string",
+                "enum": ["tarea", "idea", "seguimiento", "referencia", "nota"],
+                "description": "Clasificación general de la solicitud.",
+            },
+            "due_date": {
+                "type": ["string", "null"],
+                "description": "Fecha de vencimiento en formato YYYY-MM-DD, o null si no se menciona una fecha concreta. Usar la fecha del sistema para resolver textos relativos (hoy, mañana).",
+            },
+        },
+        "required": ["proyecto", "prioridad", "resumen", "tipo", "due_date"],
+    },
+}
 
-def clasificar_mensaje(texto: str) -> dict:
+def clasificar_mensaje(historial_mensajes: list[dict]) -> dict:
     """
-    Clasifica un texto usando GPT-4o-mini.
+    Clasifica el contexto de una conversación usando Claude 3.5 Sonnet.
+    
+    Toma un historial de mensajes con formato de Anthropic:
+    [{"role": "user"|"assistant", "content": "..."}]
     
     Retorna:
         {
-            "proyecto": str,    # Una de las opciones válidas
-            "prioridad": str,   # alta | media | baja
-            "resumen": str,     # Título corto (max 80 chars)
-            "tipo": str,        # tarea | idea | seguimiento | referencia | nota
-            "due_date": str|None  # Fecha en formato YYYY-MM-DD o null si no hay fecha
+            "proyecto": str,
+            "prioridad": str, 
+            "resumen": str,
+            "tipo": str,
+            "due_date": str|None
         }
     """
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    if not ANTHROPIC_API_KEY:
+        logger.error("ANTHROPIC_API_KEY no configurada.")
+        return _fallback_invalido(historial_mensajes[-1].get("content", ""))
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     proyectos_str = ", ".join(PROYECTOS_VALIDOS)
     today_iso = datetime.now().date().isoformat()
@@ -36,13 +77,7 @@ El usuario es Ivan, co-founder de una agencia de marketing digital (Nomadic) que
 
 La fecha de hoy es {today_iso} (formato YYYY-MM-DD). Usá ESTA fecha como referencia para interpretar fechas relativas como "hoy", "mañana", "el viernes", "esta semana", "la semana que viene", etc.
 
-Clasificá el mensaje y devolvé SOLO un JSON válido (sin markdown, sin backticks) con estos campos:
-
-- "proyecto": uno de [{proyectos_str}]
-- "prioridad": "alta" (urgente, para hoy) | "media" (esta semana) | "baja" (puede esperar)
-- "resumen": título claro y accionable de máximo 80 caracteres
-- "tipo": "tarea" (algo que hacer) | "idea" (para explorar) | "seguimiento" (follow-up) | "referencia" (info útil) | "nota" (recordatorio)
-- "due_date": string con la fecha de vencimiento en formato YYYY-MM-DD, o null si no se menciona ninguna fecha o deadline
+Analizá el historial de la conversación. Si el usuario te está pidiendo registrar algo o alterar un pedido anterior, USÁ OBLIGATORIAMENTE LA HERRAMIENTA `guardar_tarea_asana` con la información actualizada.
 
 Reglas:
 - Si mencionan un cliente o trabajo de agencia → proyecto = "Nomadic"
@@ -57,28 +92,30 @@ Reglas:
 - El resumen debe ser accionable: empezar con verbo cuando sea posible
 
 Detección de fechas y deadlines:
-- Si el mensaje menciona una fecha relativa como "hoy", "mañana", "pasado mañana", "esta semana", "el viernes", "este viernes", "la semana que viene", "el mes que viene", etc., convertí esa referencia a una fecha concreta en formato YYYY-MM-DD usando la fecha actual del sistema como referencia.
-- Si el mensaje menciona una fecha absoluta como "5 de marzo", "05/03", "2026-03-05", etc., interpretala y devolvé la fecha correspondiente en formato YYYY-MM-DD.
-- Si se mencionan varias fechas, elegí la más cercana en el futuro que tenga sentido como deadline.
-- Si explícitamente dicen que no hay deadline o es algo muy vago ("algún día", "cuando pueda", "sin apuro"), usá due_date = null.
-- Si no podés determinar una fecha clara, usá due_date = null.
-
-Ejemplos de salida válidos:
-- {{ "proyecto": "Nomadic", "prioridad": "alta", "resumen": "Preparar propuesta para cliente X", "tipo": "tarea", "due_date": "2026-03-05" }}
-- {{ "proyecto": "Personal", "prioridad": "baja", "resumen": "Explorar ideas para vacaciones", "tipo": "idea", "due_date": null }}"""
+- Si no podés determinar una fecha clara, o dicen sin apuro, usá due_date = null.
+"""
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0.3,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": texto},
-            ],
+        response = client.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=1024,
+            temperature=0.2,
+            system=system_prompt,
+            messages=historial_mensajes,
+            tools=[TOOL_GUARDAR_TAREA],
+            tool_choice={"type": "tool", "name": "guardar_tarea_asana"},
         )
 
-        resultado = json.loads(response.choices[0].message.content)
+        # Buscar el bloque de la herramienta en la respuesta
+        tool_call = next(
+            (block for block in response.content if block.type == "tool_use"), None
+        )
+
+        if not tool_call:
+            logger.warning("Claude no devolvió el uso de la herramienta. Usando fallback.")
+            return _fallback_invalido(historial_mensajes[-1].get("content", ""))
+
+        resultado = tool_call.input
 
         # Validar y sanitizar
         if resultado.get("proyecto") not in PROYECTOS_VALIDOS:
@@ -94,16 +131,19 @@ Ejemplos de salida válidos:
             resultado["resumen"] = resultado["resumen"][:77] + "..."
 
         logger.info(
-            f"Clasificado: [{resultado['proyecto']}] [{resultado['prioridad']}] {resultado['resumen']}"
+            f"Clasificado (Claude): [{resultado['proyecto']}] [{resultado['prioridad']}] {resultado['resumen']}"
         )
         return resultado
 
     except Exception as e:
-        logger.error(f"Error clasificando mensaje: {e}")
-        # Fallback seguro
-        return {
-            "proyecto": "Personal",
-            "prioridad": "media",
-            "resumen": texto[:80] if texto else "Mensaje sin clasificar",
-            "tipo": "nota",
-        }
+        logger.error(f"Error clasificando mensaje con Claude: {e}")
+        return _fallback_invalido(historial_mensajes[-1].get("content", ""))
+
+def _fallback_invalido(texto: str) -> dict:
+    return {
+        "proyecto": "Personal",
+        "prioridad": "media",
+        "resumen": texto[:80] if texto else "Mensaje sin clasificar",
+        "tipo": "nota",
+        "due_date": None
+    }

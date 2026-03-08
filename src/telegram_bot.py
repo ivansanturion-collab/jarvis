@@ -13,7 +13,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, logger
+from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, HISTORY_FILE, logger
 from .classifier import clasificar_mensaje
 from .transcriber import transcribir_audio
 from .asana_client import AsanaClient
@@ -23,6 +23,46 @@ asana_client: AsanaClient | None = None
 
 # Estados para /done
 DONE_WAITING_SELECTION, DONE_WAITING_CONFIRMATION = range(2)
+
+# Historial de conversación en memoria
+historial_conversaciones: dict[str, list[dict]] = {}
+MAX_HISTORIAL = 20
+
+def _cargar_historial():
+    """Carga el historial de conversaciones desde disco."""
+    global historial_conversaciones
+    if HISTORY_FILE.exists():
+        try:
+            data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            historial_conversaciones = data
+            logger.info(f"💾 Historial cargado desde {HISTORY_FILE}")
+        except Exception as e:
+            logger.error(f"❌ No se pudo cargar historial: {e}")
+
+def _guardar_historial():
+    """Guarda el historial de conversaciones a disco."""
+    try:
+        HISTORY_FILE.write_text(
+            json.dumps(historial_conversaciones, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.error(f"❌ No se pudo guardar historial: {e}")
+
+def _agregar_mensaje_historial(chat_id: str, role: str, content: str):
+    """Agrega un mensaje al historial de un chat."""
+    global historial_conversaciones
+    if chat_id not in historial_conversaciones:
+        historial_conversaciones[chat_id] = []
+        
+    historial_conversaciones[chat_id].append({"role": role, "content": content})
+    
+    # Truncar si es necesario
+    if len(historial_conversaciones[chat_id]) > MAX_HISTORIAL:
+        historial_conversaciones[chat_id] = historial_conversaciones[chat_id][-MAX_HISTORIAL:]
+        
+    _guardar_historial()
+
 
 
 def _ensure_chat_id_persisted(update: Update):
@@ -167,14 +207,18 @@ def _formatear_confirmacion(clasificacion: dict) -> str:
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa mensajes de texto."""
     _ensure_chat_id_persisted(update)
+    chat_id = str(update.effective_chat.id)
     texto = update.message.text
     message_id = str(update.message.message_id)
 
     logger.info(f"📨 Texto recibido: {texto[:100]}...")
 
     try:
-        # Clasificar
-        clasificacion = clasificar_mensaje(texto)
+        # Añadir al historial
+        _agregar_mensaje_historial(chat_id, "user", texto)
+
+        # Clasificar con historial
+        clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
         # Crear tarea en Asana
         task = asana_client.crear_tarea(
@@ -186,8 +230,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if task:
             respuesta = _formatear_confirmacion(clasificacion)
+            # Agregar confirmación al historial
+            _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente.")
         else:
             respuesta = "⏭️ Este mensaje ya fue procesado anteriormente."
+            _agregar_mensaje_historial(chat_id, "assistant", "Ese mensaje ya lo procesé antes, no registré nada nuevo.")
 
         await update.message.reply_text(respuesta)
 
@@ -199,6 +246,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa notas de voz."""
     _ensure_chat_id_persisted(update)
+    chat_id = str(update.effective_chat.id)
     message_id = str(update.message.message_id)
 
     logger.info(f"🎤 Nota de voz recibida (message_id: {message_id})")
@@ -214,8 +262,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Transcribir
         texto = transcribir_audio(bytes(audio_bytes))
 
+        # Añadir al historial
+        _agregar_mensaje_historial(chat_id, "user", texto)
+
         # Clasificar
-        clasificacion = clasificar_mensaje(texto)
+        clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
         # Crear tarea
         task = asana_client.crear_tarea(
@@ -230,8 +281,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🎤 Transcripción:\n\"{texto}\"\n\n"
                 f"{_formatear_confirmacion(clasificacion)}"
             )
+            # Agregar confirmación al historial
+            _agregar_mensaje_historial(chat_id, "assistant", f"Tarea '{clasificacion.get('resumen')}' registrada en Asana exitosamente.")
         else:
             respuesta = "⏭️ Este audio ya fue procesado anteriormente."
+            _agregar_mensaje_historial(chat_id, "assistant", "Esa nota de voz ya la procesé antes, no registré nada nuevo.")
 
         # Editar mensaje de "procesando" con el resultado
         await processing_msg.edit_text(respuesta)
@@ -244,6 +298,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Procesa archivos de audio adjuntos."""
     _ensure_chat_id_persisted(update)
+    chat_id = str(update.effective_chat.id)
     message_id = str(update.message.message_id)
 
     logger.info(f"🎵 Audio recibido (message_id: {message_id})")
@@ -256,7 +311,11 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         processing_msg = await update.message.reply_text("🎵 Transcribiendo audio...")
 
         texto = transcribir_audio(bytes(audio_bytes), filename)
-        clasificacion = clasificar_mensaje(texto)
+        
+        # Añadir al historial
+        _agregar_mensaje_historial(chat_id, "user", texto)
+
+        clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
         task = asana_client.crear_tarea(
             texto=texto,
@@ -270,8 +329,10 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🎵 Transcripción:\n\"{texto}\"\n\n"
                 f"{_formatear_confirmacion(clasificacion)}"
             )
+            _agregar_mensaje_historial(chat_id, "assistant", f"Recibí un audio con el texto: '{texto}'. Registré la tarea '{clasificacion.get('resumen')}' en Asana.")
         else:
             respuesta = "⏭️ Este audio ya fue procesado anteriormente."
+            _agregar_mensaje_historial(chat_id, "assistant", "Ese audio ya lo procesé antes, no registré nada nuevo.")
 
         await processing_msg.edit_text(respuesta)
 
@@ -537,6 +598,9 @@ def run_bot():
     global asana_client
 
     logger.info("🚀 Inicializando Jarvis...")
+    
+    # Cargar historial de conversaciones
+    _cargar_historial()
 
     # Inicializar cliente Asana (auto-discover IDs)
     asana_client = AsanaClient()

@@ -22,6 +22,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Anthropic
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
 # Asana
 ASANA_ACCESS_TOKEN = os.getenv("ASANA_ACCESS_TOKEN")
 ASANA_WORKSPACE_GID = os.getenv("ASANA_WORKSPACE_GID", "1135881163792746")
@@ -34,6 +37,8 @@ PROCESADOS_FILE = DATA_DIR / "procesados.json"
 ASANA_IDS_FILE = DATA_DIR / "asana_ids.json"
 # Chat de Telegram donde enviar resúmenes automáticos
 CHAT_ID_FILE = DATA_DIR / "chat_id.json"
+# Historial de conversación
+HISTORY_FILE = DATA_DIR / "history.json"
 
 # Mapeo prioridad → sección
 PRIORIDAD_SECCION_MAP = {
@@ -60,6 +65,7 @@ def validate_config():
     required = {
         "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN,
         "OPENAI_API_KEY": OPENAI_API_KEY,
+        "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
         "ASANA_ACCESS_TOKEN": ASANA_ACCESS_TOKEN,
     }
     missing = [k for k, v in required.items() if not v]
