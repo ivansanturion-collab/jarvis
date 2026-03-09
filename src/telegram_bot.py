@@ -225,7 +225,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         intent = clasificacion.get("intent", "guardar_tarea_asana")
 
-        if intent == "ver_tareas_hoy":
+        if intent == "analizar_patrones":
+            processing_msg = await update.message.reply_text("⏳ Extrayendo historial de Asana y analizando patrones...")
+            query = clasificacion.get("query", texto)
+            datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
+            respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
+            await processing_msg.edit_text(respuesta_analisis)
+            return
+        elif intent == "ver_tareas_hoy":
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
             return
         elif intent == "ver_tareas_semana":
@@ -308,7 +315,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         intent = clasificacion.get("intent", "guardar_tarea_asana")
 
-        if intent == "ver_tareas_hoy":
+        if intent == "analizar_patrones":
+            await processing_msg.edit_text("⏳ Extrayendo historial de Asana y analizando patrones...")
+            query = clasificacion.get("query", texto)
+            datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
+            respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
+            await processing_msg.edit_text(respuesta_analisis)
+            return
+        elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
             return
