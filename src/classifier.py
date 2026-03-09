@@ -76,6 +76,11 @@ TOOLS_VISTA = [
         "description": "Muestra el resumen de las tareas completadas y vencidas en la semana. Usá esta herramienta si el usuario pide 'resumen semanal', 'cómo me fue', 'qué completamos', etc.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "analizar_patrones",
+        "description": "Analiza el historial completo de tareas para responder preguntas sobre patrones de trabajo (ej. en qué proyectos se acumula más trabajo, cuántas tareas se completan, qué queda en backlog o tareas vencidas).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 def clasificar_mensaje(historial_mensajes: list[dict]) -> dict:
@@ -172,7 +177,13 @@ Detección de fechas y deadlines:
 
         intent = tool_call.name
         
-        # Si es una tool de vista, retornamos directamente la intención
+        # Si es analizar patrones, además del intent enviamos la query literal del usuario
+        if intent == "analizar_patrones":
+            logger.info(f"Clasificado (Claude): Solicitud de análisis -> analizar_patrones")
+            query_usuario = historial_mensajes[-1].get("content", "")
+            return {"intent": intent, "query": query_usuario}
+
+        # Si es una tool de vista común, retornamos directamente la intención
         if intent in ["ver_tareas_hoy", "ver_tareas_semana", "ver_backlog", "ver_deadlines", "ver_resumen"]:
             logger.info(f"Clasificado (Claude): Solicitud de vista -> {intent}")
             return {"intent": intent}

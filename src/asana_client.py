@@ -690,3 +690,93 @@ class AsanaClient:
             "vencidas": vencidas,
             "por_proyecto": por_proyecto,
         }
+
+    # ──────────────────────────────────────────────
+    # Extracción de datos para Análisis de Patrones
+    # ──────────────────────────────────────────────
+
+    def obtener_datos_historicos_analisis(self, dias: int = 30) -> str:
+        """
+        Extrae un volcado estructurado de tareas recientes (completadas y pendientes)
+        para ser inyectado en un prompt de análisis de patrones.
+        """
+        hoy = datetime.now(timezone.utc).date()
+        desde = hoy - timedelta(days=dias)
+
+        datos = {
+            "periodo_analisis_dias": dias,
+            "fecha_actual": str(hoy),
+            "tareas_completadas": [],
+            "tareas_pendientes": {
+                "Hoy": [],
+                "Semana": [],
+                "Backlog": []
+            }
+        }
+
+        # 1. Traer completadas de "Hecho"
+        seccion_hecho_gid = self._resolver_seccion_gid_por_nombre_corto("Hecho")
+        if seccion_hecho_gid:
+            opts_hecho = {
+                "opt_fields": (
+                    "name,completed,completed_at,notes,"
+                    "custom_fields,custom_fields.name,"
+                    "custom_fields.enum_value,custom_fields.enum_value.name"
+                )
+            }
+            # Limitamos la paginación internamente si hay demasiadas, pero Asana por defecto trae páginas de a 50
+            try:
+                for task in self.tasks_api.get_tasks_for_section(seccion_hecho_gid, opts_hecho):
+                    if not task.get("completed"):
+                        continue
+                        
+                    completed_at_raw = task.get("completed_at")
+                    if not completed_at_raw:
+                        continue
+                        
+                    try:
+                        completed_date = datetime.fromisoformat(
+                            completed_at_raw.replace("Z", "+00:00")
+                        ).date()
+                    except Exception:
+                        continue
+                        
+                    if desde <= completed_date <= hoy:
+                        datos["tareas_completadas"].append({
+                            "nombre": task.get("name") or "(sin título)",
+                            "proyecto": self._extraer_proyecto_desde_task(task),
+                            "fecha_completada": str(completed_date)
+                        })
+            except Exception as e:
+                logger.error(f"Error iterando completadas para análisis: {e}")
+
+        # 2. Traer pendientes (Hoy, Semana, Backlog)
+        opts_pendientes = {
+            "opt_fields": (
+                "name,completed,due_on,notes,"
+                "custom_fields,custom_fields.name,"
+                "custom_fields.enum_value,custom_fields.enum_value.name"
+            )
+        }
+        
+        for seccion in ["Hoy", "Semana", "Backlog"]:
+            sec_gid = self._resolver_seccion_gid_por_nombre_corto(seccion)
+            if not sec_gid:
+                continue
+                
+            try:
+                for task in self.tasks_api.get_tasks_for_section(sec_gid, opts_pendientes):
+                    if task.get("completed"):
+                        continue
+                        
+                    datos["tareas_pendientes"][seccion].append({
+                        "nombre": task.get("name") or "(sin título)",
+                        "proyecto": self._extraer_proyecto_desde_task(task),
+                        "due_on": task.get("due_on")  # Puede ser None
+                    })
+            except Exception as e:
+                logger.error(f"Error iterando pendientes para análisis en {seccion}: {e}")
+
+        # Retornamos todo como un JSON string indentado para pasárselo a Claude
+        import json
+        return json.dumps(datos, ensure_ascii=False, indent=2)

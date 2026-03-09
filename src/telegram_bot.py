@@ -17,6 +17,7 @@ from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, HISTORY_FILE, logger
 from .classifier import clasificar_mensaje
 from .transcriber import transcribir_audio
 from .asana_client import AsanaClient
+from .analysis import generar_analisis_patrones
 
 # Cliente Asana (se inicializa una vez)
 asana_client: AsanaClient | None = None
@@ -398,7 +399,14 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         intent = clasificacion.get("intent", "guardar_tarea_asana")
 
-        if intent == "ver_tareas_hoy":
+        if intent == "analizar_patrones":
+            await processing_msg.edit_text("⏳ Extrayendo historial de Asana y analizando patrones...")
+            query = clasificacion.get("query", texto)
+            datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
+            respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
+            await processing_msg.edit_text(respuesta_analisis)
+            return
+        elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
             return
