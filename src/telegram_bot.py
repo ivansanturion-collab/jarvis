@@ -546,7 +546,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/semana — Tareas para esta semana\n"
         "/deadlines — Tareas que vencen hoy o mañana\n"
         "/done — Marcar tareas como realizadas\n"
-        "/resumen — Resumen semanal (últimos 7 días)"
+        "/resumen — Resumen semanal (últimos 7 días)\n"
+        "/analizar — Análisis de patrones (ej: /analizar productividad)"
     )
 
 
@@ -583,6 +584,44 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ Error generando resumen semanal: {str(e)[:150]}"
         )
+
+
+async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /analizar — ejecuta análisis de patrones directamente."""
+    _ensure_chat_id_persisted(update)
+    
+    # Extraer la query de los argumentos del comando
+    if context.args:
+        query = " ".join(context.args)
+    else:
+        await update.message.reply_text(
+            "Uso: /analizar [pregunta]\n"
+            "Ejemplo: /analizar qué tareas tengo en backlog"
+        )
+        return
+
+    try:
+        processing_msg = await update.message.reply_text("⏳ Extrayendo historial de Asana y analizando patrones directamente...")
+        
+        # Obtener datos y generar análisis (bypass classifier)
+        datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
+        respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
+        
+        # Enviar respuesta en chunks si es necesario
+        chunks = _split_long_message(respuesta_analisis)
+        await processing_msg.edit_text(chunks[0])
+        if len(chunks) > 1:
+            for chunk in chunks[1:]:
+                await update.message.reply_text(chunk)
+                
+        # Guardar en historial para contexto futuro
+        chat_id = str(update.effective_chat.id)
+        _agregar_mensaje_historial(chat_id, "user", f"/analizar {query}")
+        _agregar_mensaje_historial(chat_id, "assistant", f"[Análisis directo ejecutado para: {query}]")
+
+    except Exception as e:
+        logger.error(f"Error en comando /analizar: {e}")
+        await update.message.reply_text(f"❌ Error ejecutando análisis: {str(e)[:150]}")
 
 
 async def _cmd_listar_seccion(update: Update, nombre_seccion: str, titulo: str):
@@ -828,6 +867,7 @@ def run_bot():
     app.add_handler(CommandHandler("refresh", cmd_refresh))
     app.add_handler(CommandHandler("deadlines", cmd_deadlines))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
+    app.add_handler(CommandHandler("analizar", cmd_analizar))
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("done", cmd_done_entry)],
