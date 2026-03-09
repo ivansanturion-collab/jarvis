@@ -222,7 +222,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clasificar con historial
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
 
-        # Ejecutar acción (crear o actualizar)
+        intent = clasificacion.get("intent", "guardar_tarea_asana")
+
+        if intent == "ver_tareas_hoy":
+            await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            return
+        elif intent == "ver_tareas_semana":
+            await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            return
+        elif intent == "ver_backlog":
+            await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            return
+        elif intent == "ver_deadlines":
+            texto_deadlines = _formatear_deadlines()
+            await update.message.reply_text(texto_deadlines)
+            return
+        elif intent == "ver_resumen":
+            texto_resumen = _formatear_resumen_semanal()
+            await update.message.reply_text(texto_resumen)
+            return
+
+        # Si el intent es guardar_tarea_asana, ejecutamos acción (crear o actualizar)
         accion = clasificacion.get("accion", "crear")
         task_gid = clasificacion.get("task_gid")
 
@@ -284,6 +304,31 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Clasificar
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
+
+        intent = clasificacion.get("intent", "guardar_tarea_asana")
+
+        if intent == "ver_tareas_hoy":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            return
+        elif intent == "ver_tareas_semana":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            return
+        elif intent == "ver_backlog":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            return
+        elif intent == "ver_deadlines":
+            await processing_msg.delete()
+            texto_deadlines = _formatear_deadlines()
+            await update.message.reply_text(texto_deadlines)
+            return
+        elif intent == "ver_resumen":
+            await processing_msg.delete()
+            texto_resumen = _formatear_resumen_semanal()
+            await update.message.reply_text(texto_resumen)
+            return
 
         accion = clasificacion.get("accion", "crear")
         task_gid = clasificacion.get("task_gid")
@@ -350,6 +395,31 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _agregar_mensaje_historial(chat_id, "user", texto)
 
         clasificacion = clasificar_mensaje(historial_conversaciones[chat_id])
+
+        intent = clasificacion.get("intent", "guardar_tarea_asana")
+
+        if intent == "ver_tareas_hoy":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            return
+        elif intent == "ver_tareas_semana":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            return
+        elif intent == "ver_backlog":
+            await processing_msg.delete()
+            await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            return
+        elif intent == "ver_deadlines":
+            await processing_msg.delete()
+            texto_deadlines = _formatear_deadlines()
+            await update.message.reply_text(texto_deadlines)
+            return
+        elif intent == "ver_resumen":
+            await processing_msg.delete()
+            texto_resumen = _formatear_resumen_semanal()
+            await update.message.reply_text(texto_resumen)
+            return
 
         accion = clasificacion.get("accion", "crear")
         task_gid = clasificacion.get("task_gid")

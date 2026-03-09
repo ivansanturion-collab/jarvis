@@ -50,6 +50,34 @@ TOOL_GUARDAR_TAREA = {
     },
 }
 
+TOOLS_VISTA = [
+    {
+        "name": "ver_tareas_hoy",
+        "description": "Lista las tareas pendientes de la sección Hoy. Usá esta herramienta si el usuario pregunta 'qué tengo para hoy', 'tareas de hoy', etc.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ver_tareas_semana",
+        "description": "Lista las tareas pendientes de la sección Semana. Usá esta herramienta si el usuario pregunta 'qué tengo para esta semana', 'tareas de la semana', etc.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ver_backlog",
+        "description": "Lista las tareas pendientes de la sección Backlog. Usá esta herramienta si el usuario pregunta 'qué tengo en el backlog', 'ideas pendientes', etc.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ver_deadlines",
+        "description": "Muestra las tareas con vencimiento hoy o mañana. Usá esta herramienta si el usuario pregunta 'qué se vence', 'deadlines', 'urgencias para hoy y mañana', etc.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ver_resumen",
+        "description": "Muestra el resumen de las tareas completadas y vencidas en la semana. Usá esta herramienta si el usuario pide 'resumen semanal', 'cómo me fue', 'qué completamos', etc.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
 def clasificar_mensaje(historial_mensajes: list[dict]) -> dict:
     """
     Clasifica el contexto de una conversación usando Claude 3.5 Sonnet.
@@ -129,8 +157,8 @@ Detección de fechas y deadlines:
             temperature=0.2,
             system=system_prompt,
             messages=historial_mensajes,
-            tools=[TOOL_GUARDAR_TAREA],
-            tool_choice={"type": "tool", "name": "guardar_tarea_asana"},
+            tools=[TOOL_GUARDAR_TAREA] + TOOLS_VISTA,
+            tool_choice={"type": "auto"},
         )
 
         # Buscar el bloque de la herramienta en la respuesta
@@ -142,7 +170,16 @@ Detección de fechas y deadlines:
             logger.warning("Claude no devolvió el uso de la herramienta. Usando fallback.")
             return _fallback_invalido(historial_mensajes[-1].get("content", ""))
 
+        intent = tool_call.name
+        
+        # Si es una tool de vista, retornamos directamente la intención
+        if intent in ["ver_tareas_hoy", "ver_tareas_semana", "ver_backlog", "ver_deadlines", "ver_resumen"]:
+            logger.info(f"Clasificado (Claude): Solicitud de vista -> {intent}")
+            return {"intent": intent}
+        
+        # Si es guardar tarea
         resultado = tool_call.input
+        resultado["intent"] = "guardar_tarea_asana"
 
         # Validar y sanitizar
         if resultado.get("proyecto") not in PROYECTOS_VALIDOS:
@@ -168,6 +205,8 @@ Detección de fechas y deadlines:
 
 def _fallback_invalido(texto: str) -> dict:
     return {
+        "intent": "guardar_tarea_asana",
+        "accion": "crear",
         "proyecto": "Personal",
         "prioridad": "media",
         "resumen": texto[:80] if texto else "Mensaje sin clasificar",
