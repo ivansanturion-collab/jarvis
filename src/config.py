@@ -72,3 +72,4 @@ def validate_config():
     if missing:
         raise ValueError(f"Faltan variables de entorno: {', '.join(missing)}")
     logger.info("✅ Configuración validada correctamente")
+CHATS_AUTORIZADOS = []
