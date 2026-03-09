@@ -3,17 +3,22 @@
 import json
 from datetime import date, time
 from zoneinfo import ZoneInfo
+import os
+import re
+from datetime import datetime
+from dotenv import load_dotenv
 
 from telegram import Update
 from telegram.ext import (
     Application,
+    ApplicationBuilder,
     MessageHandler,
     CommandHandler,
     ConversationHandler,
     filters,
     ContextTypes,
 )
-from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, HISTORY_FILE, logger
+from .config import TELEGRAM_BOT_TOKEN, CHAT_ID_FILE, HISTORY_FILE, logger, DATA_DIR, CHATS_AUTORIZADOS
 from .classifier import clasificar_mensaje
 from .transcriber import transcribir_audio
 from .asana_client import AsanaClient
@@ -23,10 +28,38 @@ from .analysis import generar_analisis_patrones
 asana_client: AsanaClient | None = None
 
 # Estados para /done
-DONE_WAITING_SELECTION, DONE_WAITING_CONFIRMATION = range(2)
+DONE_WAITING_SELECTION = 1
+DONE_WAITING_CONFIRMATION = 2
 
 # Historial de conversación en memoria
 historial_conversaciones: dict[str, list[dict]] = {}
+
+def _split_long_message(text: str, max_length: int = 4000) -> list[str]:
+    """Divide un mensaje largo en partes más pequeñas sin cortar palabras."""
+    if len(text) <= max_length:
+        return [text]
+        
+    chunks = []
+    while text:
+        if len(text) <= max_length:
+            chunks.append(text)
+            break
+            
+        # Buscar el último salto de línea dentro del límite
+        split_point = text.rfind('\n', 0, max_length)
+        
+        # Si no hay salto de línea, buscar el último espacio
+        if split_point == -1:
+            split_point = text.rfind(' ', 0, max_length)
+            
+        # Si no hay ni espacio, cortar en el límite exacto
+        if split_point == -1:
+            split_point = max_length
+            
+        chunks.append(text[:split_point])
+        text = text[split_point:].lstrip()
+        
+    return chunks
 MAX_HISTORIAL = 20
 
 def _cargar_historial():
@@ -230,7 +263,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query = clasificacion.get("query", texto)
             datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
             respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
-            await processing_msg.edit_text(respuesta_analisis)
+            
+            chunks = _split_long_message(respuesta_analisis)
+            await processing_msg.edit_text(chunks[0])
+            if len(chunks) > 1:
+                for chunk in chunks[1:]:
+                    await update.message.reply_text(chunk)
             return
         elif intent == "ver_tareas_hoy":
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
@@ -320,7 +358,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query = clasificacion.get("query", texto)
             datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
             respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
-            await processing_msg.edit_text(respuesta_analisis)
+            
+            chunks = _split_long_message(respuesta_analisis)
+            await processing_msg.edit_text(chunks[0])
+            if len(chunks) > 1:
+                for chunk in chunks[1:]:
+                    await update.message.reply_text(chunk)
             return
         elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
@@ -418,7 +461,12 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query = clasificacion.get("query", texto)
             datos_historicos = asana_client.obtener_datos_historicos_analisis(dias=30)
             respuesta_analisis = generar_analisis_patrones(query, datos_historicos)
-            await processing_msg.edit_text(respuesta_analisis)
+            
+            chunks = _split_long_message(respuesta_analisis)
+            await processing_msg.edit_text(chunks[0])
+            if len(chunks) > 1:
+                for chunk in chunks[1:]:
+                    await update.message.reply_text(chunk)
             return
         elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
