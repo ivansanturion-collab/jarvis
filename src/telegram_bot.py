@@ -269,23 +269,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(chunks) > 1:
                 for chunk in chunks[1:]:
                     await update.message.reply_text(chunk)
+            _agregar_mensaje_historial(chat_id, "assistant", respuesta_analisis[:500])
             return
         elif intent == "ver_tareas_hoy":
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de hoy.")
             return
         elif intent == "ver_tareas_semana":
             await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de la semana.")
             return
         elif intent == "ver_backlog":
             await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el backlog.")
             return
         elif intent == "ver_deadlines":
             texto_deadlines = _formatear_deadlines()
             await update.message.reply_text(texto_deadlines)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré los deadlines próximos.")
             return
         elif intent == "ver_resumen":
             texto_resumen = _formatear_resumen_semanal()
             await update.message.reply_text(texto_resumen)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el resumen semanal.")
             return
 
         # Si el intent es guardar_tarea_asana, ejecutamos acción (crear o actualizar)
@@ -364,28 +370,34 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(chunks) > 1:
                 for chunk in chunks[1:]:
                     await update.message.reply_text(chunk)
+            _agregar_mensaje_historial(chat_id, "assistant", respuesta_analisis[:500])
             return
         elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de hoy.")
             return
         elif intent == "ver_tareas_semana":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de la semana.")
             return
         elif intent == "ver_backlog":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el backlog.")
             return
         elif intent == "ver_deadlines":
             await processing_msg.delete()
             texto_deadlines = _formatear_deadlines()
             await update.message.reply_text(texto_deadlines)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré los deadlines próximos.")
             return
         elif intent == "ver_resumen":
             await processing_msg.delete()
             texto_resumen = _formatear_resumen_semanal()
             await update.message.reply_text(texto_resumen)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el resumen semanal.")
             return
 
         accion = clasificacion.get("accion", "crear")
@@ -467,28 +479,34 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(chunks) > 1:
                 for chunk in chunks[1:]:
                     await update.message.reply_text(chunk)
+            _agregar_mensaje_historial(chat_id, "assistant", respuesta_analisis[:500])
             return
         elif intent == "ver_tareas_hoy":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Hoy", "📋 Tareas para hoy")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de hoy.")
             return
         elif intent == "ver_tareas_semana":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Semana", "📋 Tareas para esta semana")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré las tareas de la semana.")
             return
         elif intent == "ver_backlog":
             await processing_msg.delete()
             await _cmd_listar_seccion(update, "Backlog", "📋 Tareas en Backlog")
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el backlog.")
             return
         elif intent == "ver_deadlines":
             await processing_msg.delete()
             texto_deadlines = _formatear_deadlines()
             await update.message.reply_text(texto_deadlines)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré los deadlines próximos.")
             return
         elif intent == "ver_resumen":
             await processing_msg.delete()
             texto_resumen = _formatear_resumen_semanal()
             await update.message.reply_text(texto_resumen)
+            _agregar_mensaje_historial(chat_id, "assistant", "Te mostré el resumen semanal.")
             return
 
         accion = clasificacion.get("accion", "crear")

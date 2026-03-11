@@ -83,6 +83,30 @@ TOOLS_VISTA = [
     },
 ]
 
+def _sanitizar_historial(historial: list[dict]) -> list[dict]:
+    """
+    Asegura que el historial alterne user/assistant correctamente.
+    Si hay mensajes consecutivos del mismo rol, conserva solo el último.
+    El historial siempre debe empezar con 'user'.
+    """
+    if not historial:
+        return historial
+
+    sanitizado = []
+    for msg in historial:
+        if sanitizado and sanitizado[-1]["role"] == msg["role"]:
+            # Dos del mismo rol seguidos: reemplazar el anterior con el más reciente
+            sanitizado[-1] = msg
+        else:
+            sanitizado.append(msg)
+
+    # La API de Anthropic requiere que empiece con 'user'
+    while sanitizado and sanitizado[0]["role"] != "user":
+        sanitizado.pop(0)
+
+    return sanitizado
+
+
 def clasificar_mensaje(historial_mensajes: list[dict]) -> dict:
     """
     Clasifica el contexto de una conversación usando Claude 3.5 Sonnet.
@@ -169,12 +193,13 @@ Detección de fechas y deadlines:
 """
 
     try:
+        historial_sanitizado = _sanitizar_historial(historial_mensajes)
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=1024,
             temperature=0.2,
             system=system_prompt,
-            messages=historial_mensajes,
+            messages=historial_sanitizado,
             tools=[TOOL_GUARDAR_TAREA] + TOOLS_VISTA,
             tool_choice={"type": "auto"},
         )
