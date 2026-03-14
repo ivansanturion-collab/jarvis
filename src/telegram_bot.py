@@ -1,6 +1,8 @@
 """Bot de Telegram — Punto de entrada de captura."""
 
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import date, time
 from zoneinfo import ZoneInfo
 import os
@@ -842,12 +844,39 @@ async def _enviar_resumen_programado(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Error enviando resumen semanal automático: {e}")
 
 
+# ── Health Server ─────────────────────────────────────────────────────────────
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","service":"jarvis"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Silencia logs de HTTP
+
+def start_health_server():
+    from .config import logger
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info(f"Health server corriendo en :{port}/health")
+    server.serve_forever()
+
+
 def run_bot():
     """Inicia el bot de Telegram en modo polling."""
     global asana_client
 
     logger.info("🚀 Inicializando Jarvis...")
     
+    # Health server en thread separado
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+
     # Cargar historial de conversaciones
     _cargar_historial()
 
