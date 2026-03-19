@@ -48,6 +48,16 @@ class AsanaClient:
 
         logger.warning(f"⚠️ No se encontró sección en Asana para nombre '{nombre_corto}'")
         return None
+    def _rediscover_ids(self):
+        """Fuerza re-discovery de IDs de Asana y actualiza el cache."""
+        logger.info("🔄 Forzando re-discovery de IDs de Asana...")
+        self.ids = self.discover_asana_ids()
+        ASANA_IDS_FILE.write_text(
+            json.dumps(self.ids, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info("✅ IDs re-descubiertos y guardados")
+
     # ──────────────────────────────────────────────
     # Auto-discovery de IDs
     # ──────────────────────────────────────────────
@@ -416,7 +426,23 @@ class AsanaClient:
             ),
         }
 
-        for task in self.tasks_api.get_tasks_for_section(seccion_gid, opts):
+        try:
+            tasks_iter = self.tasks_api.get_tasks_for_section(seccion_gid, opts)
+        except asana.rest.ApiException as e:
+            if e.status == 404:
+                logger.warning(
+                    f"⚠️ Sección '{nombre_seccion_corto}' (GID {seccion_gid}) no encontrada. "
+                    "Re-descubriendo IDs de Asana..."
+                )
+                self._rediscover_ids()
+                seccion_gid = self._resolver_seccion_gid_por_nombre_corto(nombre_seccion_corto)
+                if not seccion_gid:
+                    return []
+                tasks_iter = self.tasks_api.get_tasks_for_section(seccion_gid, opts)
+            else:
+                raise
+
+        for task in tasks_iter:
             if task.get("completed"):
                 continue
 

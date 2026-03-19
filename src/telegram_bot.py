@@ -687,8 +687,13 @@ async def cmd_done_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Construir lista de tareas de Hoy, Semana y Backlog
     tareas = []
-    for seccion in ("Hoy", "Semana", "Backlog"):
-        tareas.extend(asana_client.listar_tareas_seccion(seccion))
+    try:
+        for seccion in ("Hoy", "Semana", "Backlog"):
+            tareas.extend(asana_client.listar_tareas_seccion(seccion))
+    except Exception as e:
+        logger.error(f"❌ Error al listar tareas para /done: {e}")
+        await update.message.reply_text("❌ Error al consultar Asana. Intentá de nuevo en unos segundos.")
+        return ConversationHandler.END
 
     if not tareas:
         await update.message.reply_text("🎉 No tenés tareas pendientes")
